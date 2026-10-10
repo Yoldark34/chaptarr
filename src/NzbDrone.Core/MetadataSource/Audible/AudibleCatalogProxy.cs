@@ -20,7 +20,10 @@ namespace NzbDrone.Core.MetadataSource.Audible
 
     public class AudibleCatalogProxy : IAudibleCatalogProxy
     {
-        private const string API_BASE_URL = "https://api.audible.com";
+        // Local patch: the Audible marketplace comes from CHAPTARR_AUDIBLE_REGION (e.g. "fr" for audible.fr), default audible.com.
+        private static readonly (string Domain, string AcceptLanguage) Marketplace = ResolveMarketplace(Environment.GetEnvironmentVariable("CHAPTARR_AUDIBLE_REGION"));
+        private static readonly string API_BASE_URL = $"https://api.audible.{Marketplace.Domain}";
+        private static readonly string WEB_BASE_URL = $"https://www.audible.{Marketplace.Domain}";
         private const int CACHE_TTL_HOURS = 24;
         private const string SEARCH_RESPONSE_GROUPS = "product_desc,contributors,media,product_attrs";
         private static readonly string[] AudibleUserAgents =
@@ -178,7 +181,7 @@ namespace NzbDrone.Core.MetadataSource.Audible
                 Publisher = product.PublisherName,
                 Language = product.Language,
                 ReleaseDate = product.ReleaseDate ?? product.IssueDate ?? product.PublicationDateTime,
-                Link = $"https://www.audible.com/pd/{product.Asin}",
+                Link = $"{WEB_BASE_URL}/pd/{product.Asin}",
                 Sku = product.Sku,
                 SkuGroup = product.SkuLite,
                 IsListenable = product.IsListenable,
@@ -202,13 +205,31 @@ namespace NzbDrone.Core.MetadataSource.Audible
             };
         }
 
+        private static (string Domain, string AcceptLanguage) ResolveMarketplace(string region)
+        {
+            switch (region?.Trim().ToLowerInvariant())
+            {
+                case "fr": return ("fr", "fr-FR,fr;q=0.9");
+                case "uk": case "co.uk": return ("co.uk", "en-GB,en;q=0.9");
+                case "de": return ("de", "de-DE,de;q=0.9");
+                case "it": return ("it", "it-IT,it;q=0.9");
+                case "es": return ("es", "es-ES,es;q=0.9");
+                case "ca": return ("ca", "en-CA,en;q=0.9");
+                case "au": case "com.au": return ("com.au", "en-AU,en;q=0.9");
+                case "in": return ("in", "en-IN,en;q=0.9");
+                case "jp": case "co.jp": return ("co.jp", "ja-JP,ja;q=0.9");
+                case "br": case "com.br": return ("com.br", "pt-BR,pt;q=0.9");
+                default: return ("com", "en-US,en;q=0.9");
+            }
+        }
+
         private static void ApplyAudibleHeaders(HttpRequest request)
         {
             request.Headers.Add("User-Agent", AudibleUserAgents[RandomNumberGenerator.GetInt32(AudibleUserAgents.Length)]);
             request.Headers.Add("Accept", "application/json,text/json,*/*;q=0.8");
-            request.Headers.Add("Accept-Language", "en-US,en;q=0.9");
-            request.Headers.Add("Origin", "https://www.audible.com");
-            request.Headers.Add("Referer", "https://www.audible.com/");
+            request.Headers.Add("Accept-Language", Marketplace.AcceptLanguage);
+            request.Headers.Add("Origin", WEB_BASE_URL);
+            request.Headers.Add("Referer", WEB_BASE_URL + "/");
             request.Headers.Add("Sec-Fetch-Dest", "empty");
             request.Headers.Add("Sec-Fetch-Mode", "cors");
             request.Headers.Add("Sec-Fetch-Site", "same-site");
