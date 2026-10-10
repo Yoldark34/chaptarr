@@ -1090,5 +1090,91 @@ namespace Chaptarr.Core.Test.Profiles.Metadata
 
             Assert.That(result, Has.Count.EqualTo(1));
         }
+
+        [TearDown]
+        public void ResetAudiobookEditionsOnly()
+        {
+            MetadataProfileService.AudiobookEditionsOnly = false;
+        }
+
+        private static Book CreateFormatBook(string workId, BookMediaType mediaType, params (string Format, bool IsEbook)[] editions)
+        {
+            return new Book
+            {
+                Title = workId,
+                GoodreadsBookId = workId,
+                MediaType = mediaType,
+                Editions = editions
+                    .Select((e, i) => new Edition { ForeignEditionId = $"{workId}-ed{i}", Format = e.Format, IsEbook = e.IsEbook, Language = "fra" })
+                    .ToList()
+            };
+        }
+
+        private static List<Book> FilterWithFormats(bool audiobookEditionsOnly, List<BookFile> localFiles, List<Book> localBooks, params Book[] remoteBooks)
+        {
+            MetadataProfileService.AudiobookEditionsOnly = audiobookEditionsOnly;
+            var profile = CreateProfile(id: 1, allowedLanguages: "fra");
+            var dbAuthor = new Author { Id = 1, Name = "Chugong" };
+            var service = CreateService(profile, dbAuthor, localBooks ?? new List<Book>(), new List<Edition>(), localFiles);
+
+            return service.FilterBooks(new Author { Id = 1, Name = "Chugong", Books = remoteBooks.ToList() }, profile.Id);
+        }
+
+        [Test]
+        public void should_keep_print_and_ebook_only_audiobook_books_when_audiobook_editions_only_is_disabled()
+        {
+            var result = FilterWithFormats(false, null, null, CreateFormatBook("gr:print", BookMediaType.Audiobook, ("physical", false)));
+
+            Assert.That(result.Select(b => b.Title), Is.EqualTo(new[] { "gr:print" }));
+        }
+
+        [Test]
+        public void should_drop_audiobook_books_without_an_audiobook_edition_when_audiobook_editions_only_is_enabled()
+        {
+            var result = FilterWithFormats(true, null, null,
+                CreateFormatBook("gr:print", BookMediaType.Audiobook, ("physical", false)),
+                CreateFormatBook("gr:ebook", BookMediaType.Audiobook, ("ebook", true)),
+                CreateFormatBook("gr:audio", BookMediaType.Audiobook, ("audiobook", false), ("physical", false)),
+                CreateFormatBook("gr:unknown", BookMediaType.Audiobook, (null, false)));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(result.Select(b => b.Title), Is.EquivalentTo(new[] { "gr:audio", "gr:unknown" }));
+                Assert.That(result.Single(b => b.Title == "gr:audio").Editions.Select(e => e.Format), Is.EqualTo(new[] { "audiobook" }));
+            });
+        }
+
+        [Test]
+        public void should_not_apply_audiobook_editions_only_to_ebook_books()
+        {
+            var result = FilterWithFormats(true, null, null, CreateFormatBook("gr:ebook", BookMediaType.Ebook, ("ebook", true)));
+
+            Assert.That(result, Has.Count.EqualTo(1));
+        }
+
+        [Test]
+        public void should_keep_a_print_only_audiobook_book_that_has_files_when_audiobook_editions_only_is_enabled()
+        {
+            var remote = CreateFormatBook("gr:owned", BookMediaType.Audiobook, ("physical", false));
+            var localBook = new Book { Id = 30, AuthorId = 1, Title = "gr:owned", GoodreadsBookId = "gr:owned", MediaType = BookMediaType.Audiobook };
+            var localFiles = new List<BookFile>
+            {
+                new BookFile
+                {
+                    Id = 3000,
+                    EditionId = 300,
+                    MediaType = "audiobook",
+                    Edition = new Edition { Id = 300, BookId = localBook.Id, ForeignEditionId = remote.Editions[0].ForeignEditionId, Format = "physical", Book = localBook }
+                }
+            };
+
+            var result = FilterWithFormats(true, localFiles, new List<Book> { localBook }, remote);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(result, Has.Count.EqualTo(1));
+                Assert.That(result.Single().Editions, Has.Count.EqualTo(1));
+            });
+        }
     }
 }

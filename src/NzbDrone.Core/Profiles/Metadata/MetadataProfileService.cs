@@ -258,6 +258,18 @@ namespace NzbDrone.Core.Profiles.Metadata
                 return hash.ToList();
             }
 
+        // Local patch: with CHAPTARR_AUDIOBOOK_EDITIONS_ONLY=true, audiobook books keep only editions that are not
+        // ebook or print, so works that only exist as ebook/print (or not yet as an audiobook) drop out of the author.
+        internal static bool AudiobookEditionsOnly { get; set; } =
+            bool.TryParse(Environment.GetEnvironmentVariable("CHAPTARR_AUDIOBOOK_EDITIONS_ONLY"), out var audiobookEditionsOnly) && audiobookEditionsOnly;
+
+        private static bool IsAudiobookEdition(Edition edition)
+        {
+            return !edition.IsEbook &&
+                   !string.Equals(edition.Format, "ebook", StringComparison.OrdinalIgnoreCase) &&
+                   !string.Equals(edition.Format, "physical", StringComparison.OrdinalIgnoreCase);
+        }
+
         private List<Edition> FilterEditions(IEnumerable<Edition> editions, List<Edition> localEditions, List<BookFile> localFiles, MetadataProfile profile, BookMediaType mediaType)
         {
             EditionMetadataProfileFilter.ParseAllowedLanguages(
@@ -301,6 +313,11 @@ namespace NzbDrone.Core.Profiles.Metadata
             // Language filtering logic: only filter if languages are explicitly configured
             FilterByPredicate(hash, x => x.ForeignEditionId, localHash, profile, (x, p) => EditionMetadataProfileFilter.IsAllowedLanguage(x, allowedLanguages, allowUnknownLanguage, languageFilterConfigured), "edition language not allowed");
             FilterByPredicate(hash, x => x.ForeignEditionId, localHash, profile, EditionMetadataProfileFilter.MeetsIdentifierRequirements, "missing required identifier(s)");
+
+            if (AudiobookEditionsOnly && mediaType == BookMediaType.Audiobook)
+            {
+                FilterByPredicate(hash, x => x.ForeignEditionId, localHash, profile, (x, p) => IsAudiobookEdition(x), "not an audiobook edition");
+            }
             FilterByPredicate(hash, x => x.ForeignEditionId, localHash, profile, (x, p) => !p.Ignored.Any(i => MatchesTerms(x.Title, i)), "contains ignored terms");
 
             return hash.ToList();
